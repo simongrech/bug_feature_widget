@@ -162,16 +162,20 @@
 
 /* ---------------------------------------------------------------- reset --
    Scoped, and needed even where the host runs Tailwind Preflight: cNc sets
-   `line-height: normal` globally, which would otherwise retype the widget. */
+   `line-height: normal` globally, which would otherwise retype the widget.
 
-.mtfw-root,
-.mtfw-root *,
-.mtfw-root *::before,
-.mtfw-root *::after {
+   Written entirely inside `:where()`, which contributes nothing to
+   specificity, so every rule below this block wins without needing to be
+   more specific than it. Take the `:where()` off and `.mtfw-root button`
+   (0,1,1) starts beating `.mtfw-submit--bug` (0,1,0), and the buttons lose
+   their colour. */
+
+:where(.mtfw-root),
+:where(.mtfw-root) :where(*, *::before, *::after) {
   box-sizing: border-box;
 }
 
-.mtfw-root * {
+:where(.mtfw-root) :where(*) {
   margin: 0;
   padding: 0;
   border: 0 solid var(--mtfw-border);
@@ -183,7 +187,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.mtfw-root button {
+:where(.mtfw-root) :where(button) {
   background: none;
   color: inherit;
   font: inherit;
@@ -191,22 +195,21 @@
   text-align: inherit;
 }
 
-.mtfw-root button:disabled {
+:where(.mtfw-root) :where(button:disabled) {
   cursor: not-allowed;
 }
 
-.mtfw-root textarea,
-.mtfw-root select {
+:where(.mtfw-root) :where(textarea, select) {
   font: inherit;
   color: inherit;
   background: none;
 }
 
-.mtfw-root ul {
+:where(.mtfw-root) :where(ul) {
   list-style: none;
 }
 
-.mtfw-root svg {
+:where(.mtfw-root) :where(svg) {
   display: block;
   flex-shrink: 0;
 }
