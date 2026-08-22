@@ -1,0 +1,55 @@
+{
+  "name": "@melatech/feedback-widget",
+  "version": "0.1.0",
+  "description": "Floating bug-report and feature-request widget that reports into a central hub. Zero runtime dependencies, self-contained styling, light/dark themes.",
+  "license": "MIT",
+  "author": "Mela-Tech",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simongrech/bug_feature_widget.git"
+  },
+  "homepage": "https://github.com/simongrech/bug_feature_widget#readme",
+  "keywords": ["bug-report", "feature-request", "feedback", "widget", "react", "nextjs"],
+  "type": "module",
+  "sideEffects": ["*.css"],
+  "files": ["dist"],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js",
+      "require": "./dist/server/index.cjs"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "scripts": {
+    "build": "tsup && node scripts/postbuild.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
