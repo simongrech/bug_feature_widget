@@ -32,11 +32,19 @@ export function Thread({
   const load = useCallback(async () => {
     try {
       const res = await fetch(`${apiBase}/items/${itemId}/messages`);
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // The status is the whole diagnosis here: 404 means the proxy did not
+        // recognise the path (usually a stale build), 401 a lost session, 502
+        // a hub that is down. Saying only "could not load" sends somebody
+        // hunting through three codebases for it.
+        setError(`Could not load the replies (${res.status}).`);
+        setMessages([]);
+        return;
+      }
       const rows = (await res.json()) as FeedbackMessage[];
       setMessages(Array.isArray(rows) ? rows : []);
     } catch {
-      setError('Could not load the replies.');
+      setError('Could not reach the server.');
       setMessages([]);
     }
   }, [apiBase, itemId]);
@@ -60,7 +68,7 @@ export function Thread({
         // Not queued like a report is: a reply is part of a conversation, and
         // one that turns up hours later out of order is worse than one the
         // sender knows did not go.
-        setError('Could not send that reply. Try again.');
+        setError(`Could not send that reply (${res.status}).`);
         return;
       }
       const created = (await res.json()) as FeedbackMessage;

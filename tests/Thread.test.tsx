@@ -116,7 +116,7 @@ describe('Thread', () => {
     await user.type(await screen.findByPlaceholderText(/write a reply/i), 'Hello?');
     await user.click(screen.getByRole('button', { name: /send reply/i }));
 
-    expect(await screen.findByText(/could not send that reply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not send that reply \(503\)/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/write a reply/i)).toHaveValue('Hello?');
   });
 });
