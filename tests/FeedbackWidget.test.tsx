@@ -244,7 +244,11 @@ describe('FeedbackWidget', () => {
     await waitFor(() => expect(screen.getByText('New crash')).toBeInTheDocument());
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
     expect(String(post?.[0])).toMatch(/\/items$/);
-    expect(post?.[1]?.body).toBe(JSON.stringify({ kind: 'bug', text: 'New crash' }));
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      kind: 'bug',
+      text: 'New crash',
+      severity: null,
+    });
     expect(screen.getByPlaceholderText(/describe a bug/i)).toHaveValue('');
   });
 
@@ -327,6 +331,129 @@ describe('FeedbackWidget', () => {
 
     expect(await screen.findByText(/could not send that/i)).toBeInTheDocument();
     expect(localStorage.getItem('mtfw:queue:/api/feedback')).toBeNull();
+  });
+
+  it('still appears during an outage, using the mode the hub last reported', async () => {
+    // Without this the widget vanishes exactly when somebody has a bug to
+    // report, and the outbox has nothing to queue from.
+    localStorage.setItem('mtfw:mode:/api/feedback', 'bugs');
+    stubApi({ config: null });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith('/config')
+          ? Promise.reject(new Error('offline'))
+          : json([]),
+      ),
+    );
+
+    render(<FeedbackWidget actor={actor} />);
+
+    expect(
+      await screen.findByRole('button', { name: /open bugs & feature requests/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('remembers the mode after the hub has answered once', async () => {
+    stubApi({ config: { site: { name: 'Acme', slug: 'acme' }, mode: 'features' } });
+    await openWidget(<FeedbackWidget actor={actor} />);
+
+    await waitFor(() =>
+      expect(localStorage.getItem('mtfw:mode:/api/feedback')).toBe('features'),
+    );
+  });
+
+  it('says why it is not rendering, rather than vanishing without a word', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))));
+
+    // A mount point of its own: the warning is deliberately once-per-apiBase
+    // for the life of the page, so a shared one would already be spent.
+    render(<FeedbackWidget actor={actor} apiBase="/api/never-used" />);
+
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/could not be reached|FEEDBACK_HUB_URL/i);
+  });
+
+  it('starts from the first tab again after being closed', async () => {
+    stubApi();
+    const { user } = await openWidget(<FeedbackWidget actor={actor} />);
+    await user.click(screen.getByRole('button', { name: /features/i }));
+    expect(screen.getByPlaceholderText(/describe a feature request/i)).toBeInTheDocument();
+
+    const fab = screen.getByRole('button', { name: /close feedback panel/i });
+    await user.click(fab);
+    await user.click(screen.getByRole('button', { name: /open bugs & feature requests/i }));
+
+    // Where you were when you closed it is not a preference.
+    expect(screen.getByPlaceholderText(/describe a bug/i)).toBeInTheDocument();
+  });
+
+  it('comes back to the open list, not the archive', async () => {
+    stubApi({ items: [item({ id: 'done', text: 'Already handled', completed: true })] });
+    const { user } = await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+    await user.click(await screen.findByRole('button', { name: /archived/i }));
+    expect(screen.getByText('Already handled')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /close feedback panel/i }));
+    await user.click(screen.getByRole('button', { name: /open bugs & feature requests/i }));
+
+    expect(screen.queryByText('Already handled')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/describe a bug/i)).toBeInTheDocument();
+  });
+
+  it('keeps the chosen sort for the session, but not the view', async () => {
+    stubApi({ items: [item()] });
+    const { user } = await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+    await user.selectOptions(screen.getByLabelText(/sort by/i), 'level');
+
+    // Session-scoped: survives a reload, gone when the browser session ends.
+    expect(sessionStorage.getItem('mtfw:sort-field')).toBe('level');
+    expect(localStorage.getItem('mtfw:sort-field')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /close feedback panel/i }));
+    await user.click(screen.getByRole('button', { name: /open bugs & feature requests/i }));
+
+    expect(screen.getByLabelText(/sort by/i)).toHaveValue('level');
+  });
+
+  it('sends the severity the reporter chose, and offers the right scale per kind', async () => {
+    const fetchMock = stubApi();
+    const { user } = await openWidget(<FeedbackWidget actor={actor} />);
+
+    // A bug can be critical; a feature request stops at high.
+    const scale = () =>
+      Array.from(
+        screen.getByRole<HTMLSelectElement>('combobox', { name: /criticality|priority/i })
+          .options,
+      ).map((o) => o.value);
+    expect(scale()).toEqual(['', 'low', 'medium', 'high', 'critical']);
+
+    await user.type(screen.getByPlaceholderText(/describe a bug/i), 'Payments 500');
+    await user.selectOptions(screen.getByRole('combobox', { name: /criticality/i }), 'critical');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      kind: 'bug',
+      text: 'Payments 500',
+      severity: 'critical',
+    });
+
+    await user.click(screen.getByRole('button', { name: /features/i }));
+    expect(scale()).toEqual(['', 'low', 'medium', 'high']);
+  });
+
+  it('carries the severity into the outbox when the hub is down', async () => {
+    stubApi({ post: () => json({ error: 'down' }, 503) });
+    const { user } = await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+    await user.type(screen.getByPlaceholderText(/describe a bug/i), 'Urgent and undelivered');
+    await user.selectOptions(screen.getByRole('combobox', { name: /criticality/i }), 'high');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+
+    await screen.findByText(/retrying in/i);
+    const [queued] = JSON.parse(localStorage.getItem('mtfw:queue:/api/feedback') ?? '[]');
+    expect(queued.severity).toBe('high');
   });
 
   it('leaves the submit button disabled while the draft is empty', async () => {

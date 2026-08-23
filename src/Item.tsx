@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { AlertIcon, CheckIcon, ClockIcon, PencilIcon, RefreshIcon, TrashIcon } from './icons';
+import { Thread } from './Thread';
 import type { FeedbackItem, FeedbackKind } from './types';
 
 /**
@@ -94,9 +95,21 @@ export interface ItemProps {
   onDelete: (id: string) => Promise<void>;
   /** Offered on a report whose retry schedule has run out. */
   onRetry?: (id: string) => void;
+  /** Where the proxy is mounted, for loading the reply thread. */
+  apiBase?: string;
+  /** Told when a reply is added, so the list's label stays right. */
+  onMessageCountChange?: (id: string, next: number) => void;
 }
 
-export function Item({ item, kind, onSave, onDelete, onRetry }: ItemProps) {
+export function Item({
+  item,
+  kind,
+  onSave,
+  onDelete,
+  onRetry,
+  apiBase = '/api/feedback',
+  onMessageCountChange,
+}: ItemProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
   const [busy, setBusy] = useState(false);
@@ -216,6 +229,17 @@ export function Item({ item, kind, onSave, onDelete, onRetry }: ItemProps) {
         </time>
         <StatusPill item={item} onRetry={onRetry} />
       </div>
+
+      {/* A report still in the outbox has no id on the server to hang a
+          conversation from, so the thread waits until it has been delivered. */}
+      {!item.pending && (
+        <Thread
+          itemId={item.id}
+          apiBase={apiBase}
+          count={item.messageCount ?? 0}
+          onCountChange={(next) => onMessageCountChange?.(item.id, next)}
+        />
+      )}
     </li>
   );
 }

@@ -1,4 +1,4 @@
-import type { FeedbackKind } from './types';
+import type { FeedbackKind, FeedbackSeverity } from './types';
 
 /**
  * An outbox for reports that could not be delivered.
@@ -44,6 +44,8 @@ export interface QueuedReport {
   text: string;
   /** When it was written, not when it was sent. The hub is told this. */
   createdAt: string;
+  /** How urgent the reporter said it was, if they said. */
+  severity?: FeedbackSeverity | null;
   /** Failed sends so far. Indexes into the retry schedule. */
   attempts: number;
   nextAttemptAt: number;
@@ -112,13 +114,19 @@ export function mutateQueue(
 
 export function enqueue(
   key: string,
-  report: { kind: FeedbackKind; text: string; createdAt?: string },
+  report: {
+    kind: FeedbackKind;
+    text: string;
+    createdAt?: string;
+    severity?: FeedbackSeverity | null;
+  },
   schedule: readonly number[] = DEFAULT_RETRY_SCHEDULE_MS,
 ): QueuedReport {
   const entry: QueuedReport = {
     id: newId(),
     kind: report.kind,
     text: report.text,
+    severity: report.severity ?? null,
     createdAt: report.createdAt ?? new Date().toISOString(),
     attempts: 1,
     // The send that just failed counts as the first attempt, so the wait

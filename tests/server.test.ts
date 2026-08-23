@@ -258,6 +258,22 @@ describe('createFeedbackProxy', () => {
     expect(await res.text()).toBe('nope');
   });
 
+  it('passes a 204 through instead of choking on its empty body', async () => {
+    // Regression: the proxy used to rebuild every answer with `new Response(text, ...)`.
+    // For a 204 that throws, the catch reported an unreachable hub, and a delete
+    // that had already succeeded looked like a failure.
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await proxy()(
+      new Request('https://app.example.com/api/feedback/items/abc', { method: 'DELETE' }),
+      { params: { path: ['items', 'abc'] } },
+    );
+
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+  });
+
   it('returns 504 when the hub times out', async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

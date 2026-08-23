@@ -17,18 +17,43 @@ import {
   updateText as updateQueuedText,
   type QueuedReport,
 } from './queue';
+import { BUG_SEVERITIES, FEATURE_SEVERITIES } from './types';
 import type {
   FeedbackActor,
   FeedbackConfig,
   FeedbackItem,
   FeedbackKind,
   FeedbackMode,
+  FeedbackSeverity,
   FeedbackTheme,
 } from './types';
 
-const KEY_TAB = 'mtfw:tab';
+/**
+ * Sort is remembered for the browsing session; the view is not remembered at
+ * all. Which tab you were on and whether you were reading the archive are
+ * where you happened to be when you closed the panel, not a preference — so
+ * opening it again starts from the top. How you like the list ordered is a
+ * preference, and sessionStorage keeps it across page loads without making it
+ * permanent.
+ */
 const KEY_SORT_FIELD = 'mtfw:sort-field';
 const KEY_SORT_DIR = 'mtfw:sort-dir';
+
+/**
+ * A widget that renders nothing looks identical whether it is switched off,
+ * misconfigured or pointed at a dead hub. One console line turns that into
+ * something somebody can act on, without putting an error box on a page whose
+ * visitors are not the ones who can fix it.
+ */
+const warned = new Set<string>();
+
+function warnOnce(apiBase: string, why: string): void {
+  if (warned.has(apiBase)) return;
+  warned.add(apiBase);
+  console.warn(
+    `[feedback-widget] Not rendering: could not load config from "${apiBase}/config" — ${why}.`,
+  );
+}
 
 const CRITICALITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -65,6 +90,34 @@ type SortDir = 'asc' | 'desc';
  * mean retrying a doomed request for a day. Those are reported to the user
  * there and then instead.
  */
+/**
+ * The last mode the hub reported, per mount point.
+ *
+ * Without this the widget is invisible whenever `GET /config` fails, which is
+ * exactly when somebody most wants it: during an outage, on a reload, with a
+ * bug to report. It would also make the outbox pointless, since nothing can be
+ * queued from a widget that never rendered.
+ *
+ * A remembered mode is only ever a display decision — the hub still decides
+ * what it will accept, and rejects a kind the site does not collect.
+ */
+function readCachedMode(apiBase: string): FeedbackMode | undefined {
+  try {
+    const raw = localStorage.getItem(`mtfw:mode:${apiBase}`);
+    return raw === 'bugs' || raw === 'features' || raw === 'both' ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedMode(apiBase: string, mode: FeedbackMode): void {
+  try {
+    localStorage.setItem(`mtfw:mode:${apiBase}`, mode);
+  } catch {
+    /* storage blocked; the widget just re-asks the hub next time */
+  }
+}
+
 function isTransient(status?: number): boolean {
   if (status === undefined) return true; // network error — never reached the hub
   return status === 429 || status === 408 || status >= 500;
@@ -83,6 +136,10 @@ export function FeedbackWidget({
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<FeedbackKind>('bug');
   const [drafts, setDrafts] = useState<Record<FeedbackKind, string>>({ bug: '', feature: '' });
+  const [severities, setSeverities] = useState<Record<FeedbackKind, FeedbackSeverity | ''>>({
+    bug: '',
+    feature: '',
+  });
   const [showArchived, setShowArchived] = useState<Record<FeedbackKind, boolean>>({
     bug: false,
     feature: false,
@@ -114,10 +171,8 @@ export function FeedbackWidget({
   // and a mismatch here would be a hydration error on every page.
   useEffect(() => {
     try {
-      const tab = localStorage.getItem(KEY_TAB);
-      if (tab === 'bug' || tab === 'feature') setActiveTab(tab);
-      if (localStorage.getItem(KEY_SORT_FIELD) === 'level') setSortField('level');
-      if (localStorage.getItem(KEY_SORT_DIR) === 'asc') setSortDir('asc');
+      if (sessionStorage.getItem(KEY_SORT_FIELD) === 'level') setSortField('level');
+      if (sessionStorage.getItem(KEY_SORT_DIR) === 'asc') setSortDir('asc');
     } catch {
       /* private browsing, or storage disabled */
     }
@@ -130,14 +185,31 @@ export function FeedbackWidget({
     }
     if (!actor) return;
     let cancelled = false;
+
+    // Render from what the hub said last time, so an outage does not take the
+    // widget away with it. Refreshed below whenever the hub can be reached.
+    const remembered = readCachedMode(apiBase);
+    if (remembered) setMode(remembered);
+
     fetch(`${apiBase}/config`)
       .then((r) => (r.ok ? (r.json() as Promise<FeedbackConfig>) : null))
       .then((cfg) => {
-        if (!cancelled && cfg) setMode(cfg.mode);
+        if (cancelled) return;
+        if (cfg) {
+          setMode(cfg.mode);
+          writeCachedMode(apiBase, cfg.mode);
+        } else if (!remembered) {
+          // Nothing cached and the hub said no: there is no sensible widget to
+          // draw, so say why rather than vanishing without explanation.
+          warnOnce(apiBase, 'the hub rejected the request (check FEEDBACK_API_KEY)');
+        }
       })
       .catch(() => {
-        /* an unreachable hub leaves the widget hidden rather than broken */
+        if (!cancelled && !remembered) {
+          warnOnce(apiBase, 'the hub could not be reached (check FEEDBACK_HUB_URL and the proxy route)');
+        }
       });
+
     return () => {
       cancelled = true;
     };
@@ -163,6 +235,15 @@ export function FeedbackWidget({
     const btn = el.querySelector<HTMLElement>(`[data-tab="${activeTab}"]`);
     if (btn) setTabSlider({ left: btn.offsetLeft, width: btn.offsetWidth });
   }, [activeTab, isOpen, mode]);
+
+  // Opening the panel starts from the top: the first available tab, and the
+  // open list rather than wherever the archive was left.
+  useEffect(() => {
+    if (!isOpen) return;
+    setActiveTab(showBugs ? 'bug' : 'feature');
+    setShowArchived({ bug: false, feature: false });
+    setNotice(null);
+  }, [isOpen, showBugs]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -193,7 +274,7 @@ export function FeedbackWidget({
 
   const remember = (storageKey: string, value: string) => {
     try {
-      localStorage.setItem(storageKey, value);
+      sessionStorage.setItem(storageKey, value);
     } catch {
       /* ignore */
     }
@@ -279,7 +360,11 @@ export function FeedbackWidget({
         const res = await fetch(`${apiBase}/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: report.kind, text: report.text }),
+          body: JSON.stringify({
+            kind: report.kind,
+            text: report.text,
+            severity: report.severity ?? null,
+          }),
         });
         if (res.ok) {
           const created = (await res.json()) as FeedbackItem;
@@ -309,12 +394,15 @@ export function FeedbackWidget({
       setSubmitting(true);
       setNotice(null);
 
+      const severity = severities[kind] || null;
+
       const keep = (why: string) => {
         // The draft is cleared because the report is safe, not because it
         // was sent. It is in the outbox and shows in the list as pending.
-        enqueue(key, { kind, text }, retryScheduleMs);
+        enqueue(key, { kind, text, severity }, retryScheduleMs);
         setQueued(readQueue(key));
         setDrafts((prev) => ({ ...prev, [kind]: '' }));
+        setSeverities((prev) => ({ ...prev, [kind]: '' }));
         setNotice({ text: why, tone: 'info' });
       };
 
@@ -322,7 +410,7 @@ export function FeedbackWidget({
         const res = await fetch(`${apiBase}/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind, text }),
+          body: JSON.stringify({ kind, text, severity }),
         });
         if (!res.ok) {
           if (isTransient(res.status)) {
@@ -336,13 +424,14 @@ export function FeedbackWidget({
         const created = (await res.json()) as FeedbackItem;
         setItems((prev) => [created, ...prev]);
         setDrafts((prev) => ({ ...prev, [kind]: '' }));
+        setSeverities((prev) => ({ ...prev, [kind]: '' }));
       } catch {
         keep('Saved — the server is unreachable, this will send itself later.');
       } finally {
         setSubmitting(false);
       }
     },
-    [apiBase, drafts, key, retryScheduleMs, submitting],
+    [apiBase, drafts, key, retryScheduleMs, severities, submitting],
   );
 
   const saveItem = useCallback(
@@ -385,6 +474,13 @@ export function FeedbackWidget({
     },
     [apiBase, isQueued, key],
   );
+
+  /** Keeps the thread's label right without re-fetching the whole list. */
+  const bumpMessageCount = useCallback((id: string, next: number) => {
+    setItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, messageCount: next } : i)),
+    );
+  }, []);
 
   /** "Retry now" on a report whose schedule ran out. */
   const retryItem = useCallback(
@@ -501,10 +597,7 @@ export function FeedbackWidget({
               type="button"
               data-tab="bug"
               className={`mtfw-tab${activeTab === 'bug' ? ' mtfw-tab--active' : ''}`}
-              onClick={() => {
-                setActiveTab('bug');
-                remember(KEY_TAB, 'bug');
-              }}
+              onClick={() => setActiveTab('bug')}
             >
               <BugIcon width={14} height={14} />
               <span className="mtfw-tab-label">Bugs</span>
@@ -518,10 +611,7 @@ export function FeedbackWidget({
               type="button"
               data-tab="feature"
               className={`mtfw-tab${activeTab === 'feature' ? ' mtfw-tab--active' : ''}`}
-              onClick={() => {
-                setActiveTab('feature');
-                remember(KEY_TAB, 'feature');
-              }}
+              onClick={() => setActiveTab('feature')}
             >
               <LightbulbIcon width={14} height={14} />
               <span className="mtfw-tab-label">Features</span>
@@ -598,14 +688,39 @@ export function FeedbackWidget({
                 }
               }}
             />
-            <button
-              type="button"
-              className={`mtfw-submit mtfw-submit--${activeTab}`}
-              disabled={!drafts[activeTab].trim() || submitting}
-              onClick={() => void submit(activeTab)}
-            >
-              {activeTab === 'bug' ? 'Add bug' : 'Add feature request'}
-            </button>
+            <label className="mtfw-severity">
+              <span className="mtfw-severity-label">
+                {activeTab === 'bug' ? 'Criticality' : 'Priority'}
+              </span>
+              <select
+                className="mtfw-severity-select"
+                value={severities[activeTab]}
+                onChange={(e) =>
+                  setSeverities((prev) => ({
+                    ...prev,
+                    [activeTab]: e.target.value as FeedbackSeverity | '',
+                  }))
+                }
+              >
+                <option value="">Not sure</option>
+                {(activeTab === 'bug' ? BUG_SEVERITIES : FEATURE_SEVERITIES).map((level) => (
+                  <option key={level} value={level}>
+                    {level[0]!.toUpperCase() + level.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="mtfw-compose-actions">
+              <button
+                type="button"
+                className={`mtfw-submit mtfw-submit--${activeTab}`}
+                disabled={!drafts[activeTab].trim() || submitting}
+                onClick={() => void submit(activeTab)}
+              >
+                {activeTab === 'bug' ? 'Add bug' : 'Add feature request'}
+              </button>
+            </div>
             {notice && (
               <p className={`mtfw-notice mtfw-notice--${notice.tone}`}>{notice.text}</p>
             )}
@@ -631,6 +746,8 @@ export function FeedbackWidget({
                   onSave={saveItem}
                   onDelete={deleteItem}
                   onRetry={retryItem}
+                  apiBase={apiBase}
+                  onMessageCountChange={bumpMessageCount}
                 />
               ))}
             </ul>

@@ -535,10 +535,46 @@
   box-shadow: 0 0 0 1px var(--mtfw-feature);
 }
 
+/* Severity, as the reporter sees it. Optional on purpose: "Not sure" is the
+   honest default, and a forced guess is worse data than none. */
+.mtfw-severity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.mtfw-severity-label {
+  font-size: 11px;
+  line-height: 1rem;
+  color: var(--mtfw-text-muted);
+  white-space: nowrap;
+}
+
+.mtfw-severity-select {
+  flex: 1 1 0%;
+  min-width: 0;
+  border: 1px solid var(--mtfw-border-strong);
+  border-radius: 0.375rem;
+  background: var(--mtfw-surface-sunken);
+  padding: 0.25rem 0.375rem;
+  font-size: 12px;
+  line-height: 1rem;
+  color: var(--mtfw-text);
+  outline: none;
+  cursor: pointer;
+}
+
+.mtfw-compose-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 .mtfw-submit {
   display: block;
   width: 100%;
-  margin-top: 0.5rem;
   border-radius: 0.375rem;
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
@@ -888,4 +924,105 @@
 .mtfw-badge--approved {
   background: var(--mtfw-tone-emerald-bg);
   color: var(--mtfw-tone-emerald-fg);
+}
+
+/* --------------------------------------------------------------- thread --
+   The conversation on one report. Collapsed by default: most reports have
+   none, and an always-open thread would push the list out of reach. */
+
+.mtfw-thread {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--mtfw-border);
+  padding-top: 0.5rem;
+}
+
+.mtfw-thread-toggle {
+  font-size: 11px;
+  line-height: 1rem;
+  font-weight: 500;
+  color: var(--mtfw-text-muted);
+  transition: color 0.15s;
+}
+
+.mtfw-thread-toggle:hover {
+  color: var(--mtfw-text-strong);
+}
+
+.mtfw-thread-body {
+  margin-top: 0.5rem;
+}
+
+.mtfw-thread-empty {
+  padding: 0.25rem 0 0.5rem;
+  font-size: 11px;
+  color: var(--mtfw-text-faint);
+}
+
+.mtfw-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.5rem;
+}
+
+.mtfw-message {
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--mtfw-surface-raised);
+}
+
+/* Whoever is answering from the hub is the one worth spotting in a thread. */
+.mtfw-message--staff {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.mtfw-message-who {
+  font-size: 10px;
+  line-height: 1rem;
+  font-weight: 600;
+  color: var(--mtfw-text-muted);
+}
+
+.mtfw-message-body {
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mtfw-text);
+}
+
+.mtfw-thread-input {
+  width: 100%;
+  resize: none;
+  border: 1px solid var(--mtfw-border-strong);
+  border-radius: 0.375rem;
+  background: var(--mtfw-surface-sunken);
+  padding: 0.375rem 0.5rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--mtfw-text);
+  outline: none;
+}
+
+.mtfw-thread-input:focus {
+  border-color: var(--mtfw-bug);
+}
+
+.mtfw-thread-send {
+  margin-top: 0.375rem;
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  background: var(--mtfw-text-muted);
+  transition: background-color 0.15s;
+}
+
+.mtfw-thread-send:hover:not(:disabled) {
+  background: var(--mtfw-text-strong);
+}
+
+.mtfw-thread-send:disabled {
+  opacity: 0.5;
 }

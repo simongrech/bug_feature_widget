@@ -7,9 +7,9 @@ import { setFeedbackWidgetTheme } from '../src/useTheme';
  * jsdom 29's Storage can lack `clear()`, which would fail every test in
  * afterEach. A map-backed stub is enough for the widget and the outbox.
  */
-function installStorage() {
+function makeStorage(): Storage {
   const data = new Map<string, string>();
-  const storage: Storage = {
+  return {
     get length() {
       return data.size;
     },
@@ -29,8 +29,17 @@ function installStorage() {
       data.clear();
     },
   };
-  vi.stubGlobal('localStorage', storage);
-  vi.stubGlobal('sessionStorage', storage);
+}
+
+/**
+ * local and session get a store each. They are not interchangeable to the
+ * widget -- the outbox and the remembered mode are meant to outlive the
+ * browser, while the chosen sort is meant to die with the session -- so a
+ * shared backing map would hide a value written to the wrong one.
+ */
+function installStorage() {
+  vi.stubGlobal('localStorage', makeStorage());
+  vi.stubGlobal('sessionStorage', makeStorage());
 }
 
 installStorage();

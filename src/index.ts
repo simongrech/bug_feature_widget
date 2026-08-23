@@ -11,6 +11,8 @@ export type {
   FeedbackCriticality,
   FeedbackItem,
   FeedbackKind,
+  FeedbackMessage,
+  FeedbackSeverity,
   FeedbackMode,
   FeedbackPriority,
   FeedbackTheme,

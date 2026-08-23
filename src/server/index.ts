@@ -46,8 +46,11 @@ export type FeedbackProxyHandler = (
 const HUB_PREFIX = '/api/feedback/v1';
 const MAX_BODY_BYTES = 16 * 1024;
 
+/** Statuses the fetch spec forbids a body on. */
+const NULL_BODY_STATUS = new Set([204, 205, 304]);
+
 /** Only these reach the hub. Everything else in the body is dropped. */
-const WRITABLE_FIELDS = ['kind', 'text'] as const;
+const WRITABLE_FIELDS = ['kind', 'text', 'severity', 'body'] as const;
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -67,24 +70,36 @@ async function resolvePath(req: Request, ctx?: FeedbackRouteContext, basePath?: 
   return rest.split('/').filter(Boolean);
 }
 
+/** An id has to look like one before it is pasted into a URL. */
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /**
- * Decides whether a request is one of the five the hub answers, and what to
- * forward. An allow-list rather than a pass-through: the proxy holds a key
- * with write access, so anything it does not recognise is a 404, not a punt.
+ * Decides whether a request is one the hub answers, and what to forward. An
+ * allow-list rather than a pass-through: the proxy holds a key with write
+ * access, so anything it does not recognise is a 404, not a punt.
  */
 function route(method: string, segments: string[]): string | null {
-  const [head, id, ...extra] = segments;
+  const [head, id, tail, ...extra] = segments;
   if (extra.length > 0) return null;
 
-  if (head === 'config' && id === undefined && method === 'GET') return 'config';
+  if (head === 'config') {
+    return id === undefined && method === 'GET' ? 'config' : null;
+  }
 
-  if (head === 'items') {
-    if (id === undefined) {
-      if (method === 'GET' || method === 'POST') return 'items';
-      return null;
-    }
-    if (!id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id)) return null;
-    if (method === 'PATCH' || method === 'DELETE') return `items/${id}`;
+  if (head !== 'items') return null;
+
+  if (id === undefined) {
+    return method === 'GET' || method === 'POST' ? 'items' : null;
+  }
+  if (!ID.test(id)) return null;
+
+  if (tail === undefined) {
+    return method === 'PATCH' || method === 'DELETE' ? `items/${id}` : null;
+  }
+
+  // The conversation on one report.
+  if (tail === 'messages') {
+    return method === 'GET' || method === 'POST' ? `items/${id}/messages` : null;
   }
 
   return null;
@@ -155,6 +170,17 @@ export function createFeedbackProxy(options: FeedbackProxyOptions): FeedbackProx
         cache: 'no-store',
         signal: controller.signal,
       });
+
+      // 204/205/304 may not carry a body. Passing the empty string through
+      // makes the Response constructor throw, which the catch below would
+      // then report as an unreachable hub — after a DELETE that in fact
+      // succeeded. That is the shape of a "failed" delete that deletes.
+      if (NULL_BODY_STATUS.has(upstream.status)) {
+        return new Response(null, {
+          status: upstream.status,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
 
       const text = await upstream.text();
       return new Response(text, {

@@ -198,6 +198,24 @@ already right and server and client markup agree.
 
 <br>
 
+## Severity and replies
+
+**The reporter sets the severity.** A select sits under the compose box — "Not sure" by
+default, because a forced guess is worse data than none. One field on the wire; the hub
+files it as criticality for a bug and priority for a feature, and refuses `critical` on a
+feature because that scale stops at high. Staff can still change it afterwards.
+
+**Every report carries a thread.** Collapsed behind a `Reply` / `3 replies` toggle and
+loaded only when opened — most reports have none, and fetching every thread with the list
+would slow the common case for the sake of the rare one. Staff replies are tinted so the
+answer from your side is the one that catches the eye.
+
+A reply is *not* queued when the hub is down, unlike a report. A reply that turns up hours
+later, out of order, in a conversation that has moved on is worse than one the sender knows
+did not send.
+
+<br>
+
 ## When the hub is down
 
 A report is never lost to an outage. If the hub cannot be reached, the widget keeps the
@@ -291,10 +309,15 @@ things; if your app has something higher, that is the number to beat.
 
 ## What the widget can and cannot do
 
-It collects reports and shows the reporter their own project's list: submit, browse open
-items, browse archived ones, sort by date or severity, and edit or delete their own
-entries while they are still open. A report filed while the hub is unreachable is queued
-and retried rather than lost.
+It collects reports and shows the reporter their own project's list: submit with a
+severity, browse open items, browse archived ones, sort by date or severity, edit or
+delete their own entries while they are still open, and hold a conversation on any of
+them. A report filed while the hub is unreachable is queued and retried rather than lost.
+
+Triage lives in the hub. Approving, rejecting and marking done are not things a reporting
+site can do — an API key is scoped to reporting, and an item stops being editable once
+somebody in the hub has acted on it. The **thread stays open** after that, deliberately:
+"why was this rejected?" is exactly the question a conversation is for.
 
 Triage lives in the hub. Approving, rejecting, marking done and setting criticality are
 not things a reporting site can do — an API key is scoped to reporting, and an item stops
@@ -312,8 +335,10 @@ from `apiBase`, and what `createFeedbackProxy` forwards to `{hubUrl}/api/feedbac
 | `GET` | `/config` | `{ site: { name, slug }, mode }` |
 | `GET` | `/items` | `FeedbackItem[]` — both kinds; add `?kind=bug` to narrow |
 | `POST` | `/items` | `{ kind, text }` → the created `FeedbackItem` |
-| `PATCH` | `/items/{id}` | `{ text }` → the updated `FeedbackItem` |
+| `PATCH` | `/items/{id}` | `{ text?, severity? }` → the updated `FeedbackItem` |
 | `DELETE` | `/items/{id}` | `204` |
+| `GET` | `/items/{id}/messages` | `FeedbackMessage[]`, oldest first |
+| `POST` | `/items/{id}/messages` | `{ body }` → the created `FeedbackMessage` |
 
 ```ts
 interface FeedbackItem {
@@ -329,6 +354,16 @@ interface FeedbackItem {
   reporterName?: string | null;
   reporterEmail?: string | null;
   mine: boolean;              // whether the current actor filed it
+  messageCount: number;       // live replies on the thread
+}
+
+interface FeedbackMessage {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorKind: 'reporter' | 'staff';
+  authorName: string | null;
+  mine: boolean;              // whether the current reporter wrote it
 }
 ```
 

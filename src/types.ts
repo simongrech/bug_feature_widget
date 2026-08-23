@@ -8,6 +8,22 @@ export type FeedbackCriticality = 'low' | 'medium' | 'high' | 'critical';
 export type FeedbackPriority = 'low' | 'medium' | 'high';
 
 /**
+ * What the reporter can set. One scale on the wire; the hub files it as
+ * criticality for a bug and priority for a feature, and refuses `critical`
+ * on a feature because that scale stops at high.
+ */
+export type FeedbackSeverity = FeedbackCriticality;
+
+export const BUG_SEVERITIES: readonly FeedbackSeverity[] = [
+  'low',
+  'medium',
+  'high',
+  'critical',
+];
+
+export const FEATURE_SEVERITIES: readonly FeedbackSeverity[] = ['low', 'medium', 'high'];
+
+/**
  * `system` follows the operating system and keeps following it; `light` and
  * `dark` lock the widget regardless of anything else. See `useResolvedTheme`.
  */
@@ -55,6 +71,19 @@ export interface FeedbackItem {
   pendingDetail?: string;
   /** Schedule exhausted — offers a manual retry instead. */
   gaveUp?: boolean;
+  /** Live replies on this report. Absent on one still in the outbox. */
+  messageCount?: number;
+}
+
+/** One reply on a report, from either side of the conversation. */
+export interface FeedbackMessage {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorKind: 'reporter' | 'staff';
+  authorName: string | null;
+  /** Whether the current reporter wrote it. */
+  mine: boolean;
 }
 
 /** Answer of `GET {apiBase}/config`. */
