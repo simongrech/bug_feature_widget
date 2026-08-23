@@ -44,6 +44,7 @@
     "dev": "vite --config playground/vite.config.ts",
     "build": "tsup && node scripts/postbuild.mjs",
     "typecheck": "tsc --noEmit",
+    "prepare": "npm run build",
     "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
