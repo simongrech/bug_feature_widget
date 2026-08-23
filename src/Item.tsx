@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { PencilIcon, TrashIcon } from './icons';
+import { AlertIcon, CheckIcon, ClockIcon, PencilIcon, RefreshIcon, TrashIcon } from './icons';
 import type { FeedbackItem, FeedbackKind } from './types';
 
 /**
@@ -28,22 +28,84 @@ function StatusBadge({ item }: { item: FeedbackItem }) {
   return null;
 }
 
+/**
+ * Whether this report has reached the tracker.
+ *
+ * Three states, and the middle one is the reason this exists: a report sitting
+ * in the browser outbox during an outage looks exactly like a delivered one
+ * unless it is labelled, and somebody who cannot tell will file it twice. The
+ * short label carries the wait; `title` carries the full story, because a
+ * tooltip positioned in CSS would be clipped by the panel's own overflow.
+ */
+function StatusPill({
+  item,
+  onRetry,
+}: {
+  item: FeedbackItem;
+  onRetry?: (id: string) => void;
+}) {
+  if (!item.pending) {
+    return (
+      <span
+        className="mtfw-status mtfw-status--sent"
+        title="Delivered to the tracker."
+        aria-label="Delivered to the tracker"
+      >
+        <CheckIcon width={11} height={11} />
+        Sent
+      </span>
+    );
+  }
+
+  const detail = item.pendingDetail ?? 'Saved on this device, not yet sent.';
+
+  if (item.gaveUp) {
+    return (
+      <span className="mtfw-status mtfw-status--failed" title={detail} aria-label={detail}>
+        <AlertIcon width={11} height={11} />
+        Not sent
+        {onRetry && (
+          <button
+            type="button"
+            className="mtfw-status-retry"
+            onClick={() => onRetry(item.id)}
+            title="Try sending this now"
+          >
+            <RefreshIcon width={10} height={10} />
+            Retry
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  return (
+    <span className="mtfw-status mtfw-status--pending" title={detail} aria-label={detail}>
+      <ClockIcon width={11} height={11} />
+      {item.pendingLabel ?? 'pending'}
+    </span>
+  );
+}
+
 export interface ItemProps {
   item: FeedbackItem;
   kind: FeedbackKind;
   onSave: (id: string, text: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  /** Offered on a report whose retry schedule has run out. */
+  onRetry?: (id: string) => void;
 }
 
-export function Item({ item, kind, onSave, onDelete }: ItemProps) {
+export function Item({ item, kind, onSave, onDelete, onRetry }: ItemProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
   const [busy, setBusy] = useState(false);
 
   const archived = item.completed || item.rejected;
   // Triage lives in the hub, so an item stops being the reporter's to change
-  // the moment somebody there has acted on it.
-  const editable = item.mine && !archived;
+  // the moment somebody there has acted on it. A report still in the outbox
+  // has reached nobody, so it is always editable.
+  const editable = item.mine && (item.pending || !archived);
   const level = kind === 'bug' ? item.criticality : item.priority;
 
   const save = useCallback(async () => {
@@ -62,7 +124,11 @@ export function Item({ item, kind, onSave, onDelete }: ItemProps) {
   }, [draft, item.id, item.text, onSave]);
 
   return (
-    <li className={`mtfw-item${archived ? ' mtfw-item--archived' : ''}`}>
+    <li
+      className={`mtfw-item${archived ? ' mtfw-item--archived' : ''}${
+        item.pending ? ' mtfw-item--unsent' : ''
+      }`}
+    >
       <div className="mtfw-item-top">
         <div className="mtfw-item-main">
           {editing ? (
@@ -144,9 +210,12 @@ export function Item({ item, kind, onSave, onDelete }: ItemProps) {
         )}
       </div>
 
-      <time className="mtfw-item-date" dateTime={item.createdAt}>
-        {formatDate(item.createdAt)}
-      </time>
+      <div className="mtfw-item-foot">
+        <time className="mtfw-item-date" dateTime={item.createdAt}>
+          {formatDate(item.createdAt)}
+        </time>
+        <StatusPill item={item} onRetry={onRetry} />
+      </div>
     </li>
   );
 }

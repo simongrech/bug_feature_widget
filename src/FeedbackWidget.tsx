@@ -2,6 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, BugIcon, LightbulbIcon, SplitIcon } from './icons';
 import { Item } from './Item';
 import { useResolvedTheme } from './useTheme';
+import {
+  DEFAULT_RETRY_SCHEDULE_MS,
+  backOff,
+  claim,
+  describeStatus,
+  describeWait,
+  dueReports,
+  enqueue,
+  queueKey,
+  readQueue,
+  remove as removeQueued,
+  retryNow,
+  updateText as updateQueuedText,
+  type QueuedReport,
+} from './queue';
 import type {
   FeedbackActor,
   FeedbackConfig,
@@ -28,10 +43,32 @@ export interface FeedbackWidgetProps {
   /** `system` (default) follows the OS; `light`/`dark` lock the widget. */
   theme?: FeedbackTheme;
   position?: 'bottom-right' | 'bottom-left';
+  /**
+   * Waits between delivery attempts for a report the hub could not accept.
+   * Defaults to 5m, 15m, 30m, 1h, 2h, 5h, 12h, then the next day. Once the
+   * list runs out the report is kept and offers a manual retry rather than
+   * being dropped. See `queue.ts` — attempts are made in the browser, so
+   * these are "not before" rather than "exactly at".
+   */
+  retryScheduleMs?: readonly number[];
 }
 
 type SortField = 'date' | 'level';
 type SortDir = 'asc' | 'desc';
+
+/**
+ * Whether a failed send is worth keeping and retrying.
+ *
+ * A hub that is down, overloaded or unreachable will accept the report later,
+ * so it goes in the outbox. A 4xx will not: a malformed body or a kind this
+ * site does not collect would fail identically tomorrow, and queueing it would
+ * mean retrying a doomed request for a day. Those are reported to the user
+ * there and then instead.
+ */
+function isTransient(status?: number): boolean {
+  if (status === undefined) return true; // network error — never reached the hub
+  return status === 429 || status === 408 || status >= 500;
+}
 
 export function FeedbackWidget({
   actor,
@@ -39,6 +76,7 @@ export function FeedbackWidget({
   mode: modeProp,
   theme = 'system',
   position = 'bottom-right',
+  retryScheduleMs = DEFAULT_RETRY_SCHEDULE_MS,
 }: FeedbackWidgetProps) {
   const [mode, setMode] = useState<FeedbackMode | undefined>(modeProp);
   const [items, setItems] = useState<FeedbackItem[]>([]);
@@ -52,14 +90,22 @@ export function FeedbackWidget({
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [tabSlider, setTabSlider] = useState<{ left: number; width: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Two tones. "We kept your report" is reassurance, and showing it in the
+  // same red as a real failure reads as one.
+  const [notice, setNotice] = useState<{ text: string; tone: 'error' | 'info' } | null>(
+    null,
+  );
   const [submitting, setSubmitting] = useState(false);
+  const [queued, setQueued] = useState<QueuedReport[]>([]);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
 
   const resolvedTheme = useResolvedTheme(theme);
+
+  /** One outbox per mount point, so two widgets cannot eat each other's. */
+  const key = useMemo(() => queueKey(apiBase), [apiBase]);
 
   const showBugs = mode === 'bugs' || mode === 'both';
   const showFeatures = mode === 'features' || mode === 'both';
@@ -145,9 +191,9 @@ export function FeedbackWidget({
     });
   }, [mode, showBugs, showFeatures]);
 
-  const remember = (key: string, value: string) => {
+  const remember = (storageKey: string, value: string) => {
     try {
-      localStorage.setItem(key, value);
+      localStorage.setItem(storageKey, value);
     } catch {
       /* ignore */
     }
@@ -172,15 +218,40 @@ export function FeedbackWidget({
       });
   }, [sortField, sortDir]);
 
+  // Undelivered reports render alongside real ones, so somebody who filed
+  // during an outage can see their report was kept rather than lost.
+  const pendingItems = useMemo<FeedbackItem[]>(
+    () =>
+      queued.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        text: r.text,
+        createdAt: r.createdAt,
+        completed: false,
+        approved: false,
+        rejected: false,
+        criticality: null,
+        priority: null,
+        reporterName: actor?.userName ?? null,
+        reporterEmail: actor?.userEmail ?? null,
+        mine: true,
+        pending: true,
+        pendingLabel: describeWait(r),
+        pendingDetail: describeStatus(r, retryScheduleMs),
+        gaveUp: r.gaveUp,
+      })),
+    [queued, actor, retryScheduleMs],
+  );
+
   const forTab = useCallback(
     (kind: FeedbackKind) => {
-      const mine = items.filter((i) => i.kind === kind);
+      const mine = [...pendingItems, ...items].filter((i) => i.kind === kind);
       return {
         open: sorted(mine.filter((i) => !i.completed && !i.rejected)),
         archived: sorted(mine.filter((i) => i.completed || i.rejected)),
       };
     },
-    [items, sorted],
+    [items, pendingItems, sorted],
   );
 
   const bugList = forTab('bug');
@@ -188,12 +259,65 @@ export function FeedbackWidget({
   const totalOpen =
     (showBugs ? bugList.open.length : 0) + (showFeatures ? featureList.open.length : 0);
 
+  const isQueued = useCallback((id: string) => queued.some((r) => r.id === id), [queued]);
+
+  /**
+   * Sends everything in the outbox that is due.
+   *
+   * Each report is claimed before the request so a second tab does not send it
+   * as well, and released by `backOff` if it fails. Runs one at a time: a hub
+   * that has just come back should not be met with a burst.
+   */
+  const flush = useCallback(async () => {
+    if (!actor) return;
+    const due = dueReports(readQueue(key));
+    if (due.length === 0) return;
+
+    for (const report of due) {
+      claim(key, report.id);
+      try {
+        const res = await fetch(`${apiBase}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: report.kind, text: report.text }),
+        });
+        if (res.ok) {
+          const created = (await res.json()) as FeedbackItem;
+          removeQueued(key, report.id);
+          setItems((prev) =>
+            prev.some((i) => i.id === created.id) ? prev : [created, ...prev],
+          );
+        } else if (isTransient(res.status)) {
+          backOff(key, report.id, `HTTP ${res.status}`, retryScheduleMs);
+        } else {
+          // A permanent rejection will fail the same way tomorrow. Stop
+          // retrying, but keep the report so it can be seen and copied out.
+          backOff(key, report.id, `HTTP ${res.status}`, []);
+        }
+      } catch (err) {
+        backOff(key, report.id, err instanceof Error ? err.message : 'network error', retryScheduleMs);
+      }
+    }
+
+    setQueued(readQueue(key));
+  }, [actor, apiBase, key, retryScheduleMs]);
+
   const submit = useCallback(
     async (kind: FeedbackKind) => {
       const text = drafts[kind].trim();
       if (!text || submitting) return;
       setSubmitting(true);
-      setError(null);
+      setNotice(null);
+
+      const keep = (why: string) => {
+        // The draft is cleared because the report is safe, not because it
+        // was sent. It is in the outbox and shows in the list as pending.
+        enqueue(key, { kind, text }, retryScheduleMs);
+        setQueued(readQueue(key));
+        setDrafts((prev) => ({ ...prev, [kind]: '' }));
+        setNotice({ text: why, tone: 'info' });
+      };
+
       try {
         const res = await fetch(`${apiBase}/items`, {
           method: 'POST',
@@ -201,55 +325,125 @@ export function FeedbackWidget({
           body: JSON.stringify({ kind, text }),
         });
         if (!res.ok) {
-          // Say so rather than clearing the box: a report that silently
-          // vanishes is worse than no widget at all.
-          setError(
-            res.status === 429
-              ? 'Too many reports — try again shortly.'
-              : 'Could not send that. Try again.',
-          );
+          if (isTransient(res.status)) {
+            keep('Saved — the server is busy, this will send itself shortly.');
+          } else {
+            // Nothing to retry: say so and leave the text in the box.
+            setNotice({ text: 'Could not send that. Try again.', tone: 'error' });
+          }
           return;
         }
         const created = (await res.json()) as FeedbackItem;
         setItems((prev) => [created, ...prev]);
         setDrafts((prev) => ({ ...prev, [kind]: '' }));
       } catch {
-        setError('Could not reach the server.');
+        keep('Saved — the server is unreachable, this will send itself later.');
       } finally {
         setSubmitting(false);
       }
     },
-    [apiBase, drafts, submitting],
+    [apiBase, drafts, key, retryScheduleMs, submitting],
   );
 
   const saveItem = useCallback(
     async (id: string, text: string) => {
+      // Still in the outbox, so the edit lands on the queued copy — there is
+      // nothing on the server to PATCH yet.
+      if (isQueued(id)) {
+        updateQueuedText(key, id, text);
+        setQueued(readQueue(key));
+        return;
+      }
       const res = await fetch(`${apiBase}/items/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
       if (!res.ok) {
-        setError('Could not save that change.');
+        setNotice({ text: 'Could not save that change.', tone: 'error' });
         return;
       }
       const updated = (await res.json()) as FeedbackItem;
       setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...updated } : i)));
     },
-    [apiBase],
+    [apiBase, isQueued, key],
   );
 
   const deleteItem = useCallback(
     async (id: string) => {
+      if (isQueued(id)) {
+        removeQueued(key, id);
+        setQueued(readQueue(key));
+        return;
+      }
       const res = await fetch(`${apiBase}/items/${id}`, { method: 'DELETE' });
       if (!res.ok) {
-        setError('Could not delete that.');
+        setNotice({ text: 'Could not delete that.', tone: 'error' });
         return;
       }
       setItems((prev) => prev.filter((i) => i.id !== id));
     },
-    [apiBase],
+    [apiBase, isQueued, key],
   );
+
+  /** "Retry now" on a report whose schedule ran out. */
+  const retryItem = useCallback(
+    (id: string) => {
+      retryNow(key, id);
+      setQueued(readQueue(key));
+      void flush();
+    },
+    [flush, key],
+  );
+
+  // Everything that should prompt a delivery attempt.
+  //
+  // The retry schedule is measured in hours, but the trigger for acting on it
+  // is the app being open. Coming back online and un-hiding the tab are the
+  // two moments most likely to follow an outage, so both are watched as well
+  // as the clock.
+  useEffect(() => {
+    if (!actor || !mode) return;
+
+    setQueued(readQueue(key));
+    void flush();
+
+    // A minute is fine: the shortest wait in the schedule is five.
+    const timer = window.setInterval(() => {
+      setQueued(readQueue(key));
+      void flush();
+    }, 60_000);
+
+    const onWake = () => {
+      if (document.visibilityState === 'visible') {
+        setQueued(readQueue(key));
+        void flush();
+      }
+    };
+    // Another tab sent or queued something; reflect it rather than showing
+    // a list that disagrees with what is actually in the outbox.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === key) setQueued(readQueue(key));
+    };
+
+    window.addEventListener('online', onWake);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', onWake);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [actor, mode, key, flush]);
+
+  // Keeps the "retrying in 2h" line honest while the panel sits open, without
+  // a re-render a second when it is shut.
+  useEffect(() => {
+    if (!isOpen || queued.length === 0) return;
+    const tick = window.setInterval(() => setQueued(readQueue(key)), 30_000);
+    return () => window.clearInterval(tick);
+  }, [isOpen, queued.length, key]);
 
   if (!actor || !mode) return null;
 
@@ -412,7 +606,9 @@ export function FeedbackWidget({
             >
               {activeTab === 'bug' ? 'Add bug' : 'Add feature request'}
             </button>
-            {error && <p className="mtfw-error">{error}</p>}
+            {notice && (
+              <p className={`mtfw-notice mtfw-notice--${notice.tone}`}>{notice.text}</p>
+            )}
           </div>
         )}
 
@@ -434,6 +630,7 @@ export function FeedbackWidget({
                   kind={activeTab}
                   onSave={saveItem}
                   onDelete={deleteItem}
+                  onRetry={retryItem}
                 />
               ))}
             </ul>

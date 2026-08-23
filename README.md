@@ -7,6 +7,7 @@ every project you run shares one inbox instead of standing up its own database.
 - **Self-contained styling.** One stylesheet, no Tailwind config to change.
 - **Light and dark**, following the OS or driven by the host site at runtime.
 - **The API key never reaches the browser.** The widget talks only to your own origin.
+- **A report survives an outage.** If the hub is down it is kept and retried, not lost.
 
 <br>
 
@@ -118,6 +119,7 @@ tree it sits does not matter — with one exception, noted under *Gotchas*.
 | `mode` | `'bugs' \| 'features' \| 'both'` | from the hub | Overrides what the API key is configured for. Normally leave it unset so the hub stays the single source of truth. |
 | `theme` | `'light' \| 'dark' \| 'system'` | `'system'` | See below. |
 | `position` | `'bottom-right' \| 'bottom-left'` | `'bottom-right'` | |
+| `retryScheduleMs` | `number[]` | 5m, 15m, 30m, 1h, 2h, 5h, 12h, 24h | Waits between delivery attempts when the hub is unreachable. See below. |
 
 The button changes with the mode: solid red for bugs only, solid amber for features only,
 and split diagonally when it collects both.
@@ -196,6 +198,59 @@ already right and server and client markup agree.
 
 <br>
 
+## When the hub is down
+
+A report is never lost to an outage. If the hub cannot be reached, the widget keeps the
+report in a browser outbox and retries it on a widening schedule:
+
+```
+5m -> 15m -> 30m -> 1h -> 2h -> 5h -> 12h -> next day
+```
+
+Override it with `retryScheduleMs` if that does not suit.
+
+The reporter sees this rather than an error: the compose box clears (the report is safe),
+a muted line says it was saved, and the report appears in the list straight away with a
+status pill.
+
+### Status pill
+
+Every report carries one, in its footer opposite the timestamp. Hover for the detail.
+
+| | | |
+| --- | --- | --- |
+| ✓ | **Sent** | Delivered to the hub. |
+| ◷ | **retrying in 2h** | In the outbox. The tooltip gives attempts made, when the next one is due, and the last error. |
+| ⚠ | **Not sent** &nbsp;·&nbsp; Retry | The schedule ran out. The report is kept, and the Retry button sends it immediately. |
+
+An undelivered report also gets a dashed border, and stays editable and deletable —
+nothing has reached the hub yet, so edits go to the queued copy and deleting just drops
+it from the outbox.
+
+### What gets retried
+
+Only failures that could plausibly succeed later: a network error, a timeout, `429`, or
+any `5xx`. A `4xx` is a permanent rejection — a malformed body, or a kind this site does
+not collect — and would fail identically tomorrow, so it is reported at once and the text
+is left in the box rather than being retried for a day.
+
+### The honest limitation
+
+**Retries happen in the browser, so attempts are only made while the app is open.** The
+widget tries on mount, when the tab becomes visible, when the browser comes back online,
+and on a one-minute timer. So the long waits mean "not before then" rather than "exactly
+then" — a report queued overnight goes out when someone next opens the app.
+
+Nothing is lost either way: the outbox is `localStorage`, so it survives the tab closing,
+the browser quitting and a reboot. For guaranteed background delivery you would need a
+durable queue and a scheduler on your own server, which is more than a drop-in widget can
+assume you have.
+
+Two tabs open on the same app will not double-send: each report is claimed for 60 seconds
+before its request, and the tabs keep their lists in step through the `storage` event.
+
+<br>
+
 ## Restyling
 
 Every colour is a CSS custom property on `.mtfw-root`. Override any of them:
@@ -238,7 +293,8 @@ things; if your app has something higher, that is the number to beat.
 
 It collects reports and shows the reporter their own project's list: submit, browse open
 items, browse archived ones, sort by date or severity, and edit or delete their own
-entries while they are still open.
+entries while they are still open. A report filed while the hub is unreachable is queued
+and retried rather than lost.
 
 Triage lives in the hub. Approving, rejecting, marking done and setting criticality are
 not things a reporting site can do — an API key is scoped to reporting, and an item stops
@@ -292,6 +348,8 @@ key is over its rate limit.
 
 ```bash
 npm install
+npm run dev            # Vite playground with an in-memory mock of the hub
+npm test               # vitest
 npm run typecheck
 npm run build          # tsup → dist/, then postbuild applies "use client"
 ```

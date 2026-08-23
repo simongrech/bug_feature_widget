@@ -568,11 +568,20 @@
   opacity: 0.5;
 }
 
-.mtfw-error {
+.mtfw-notice {
   margin-top: 0.5rem;
   font-size: 0.75rem;
   line-height: 1rem;
+}
+
+.mtfw-notice--error {
   color: var(--mtfw-danger);
+}
+
+/* Kept-for-later, not failed. Muted rather than red, or the reassurance
+   reads as the thing it is reassuring about. */
+.mtfw-notice--info {
+  color: var(--mtfw-text-muted);
 }
 
 /* ----------------------------------------------------------------- list -- */
@@ -692,12 +701,74 @@
   color: var(--mtfw-bug);
 }
 
-.mtfw-item-date {
-  display: block;
+.mtfw-item-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-top: 0.25rem;
+}
+
+.mtfw-item-date {
   font-size: 10px;
   line-height: 1rem;
   color: var(--mtfw-text-faint);
+}
+
+/* --------------------------------------------------------------- status --
+   Whether the report reached the tracker. The detail is a native `title`
+   rather than a CSS tooltip: the panel and its list both clip their overflow,
+   so anything positioned outside a row would be cut off. */
+
+.mtfw-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  padding: 1px 0.375rem;
+  font-size: 10px;
+  line-height: 1rem;
+  font-weight: 500;
+  cursor: default;
+}
+
+.mtfw-status--sent {
+  color: var(--mtfw-tone-emerald-fg);
+  background: var(--mtfw-tone-emerald-bg);
+}
+
+.mtfw-status--pending {
+  color: var(--mtfw-tone-amber-fg);
+  background: var(--mtfw-tone-amber-bg);
+}
+
+.mtfw-status--failed {
+  color: var(--mtfw-tone-red-fg);
+  background: var(--mtfw-tone-red-bg);
+}
+
+.mtfw-status-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin-left: 0.25rem;
+  border-radius: 9999px;
+  padding: 0 0.25rem;
+  font-size: 10px;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mtfw-status-retry:hover {
+  background: rgba(127, 29, 29, 0.15);
+}
+
+/* An undelivered report is the one thing in the list worth catching the eye. */
+.mtfw-item--unsent {
+  border-style: dashed;
 }
 
 /* ---------------------------------------------------------------- edit -- */

@@ -1,5 +1,8 @@
 src/
 scripts/
+playground/
+tests/
 .github/
 tsup.config.ts
 tsconfig.json
+vitest.config.ts

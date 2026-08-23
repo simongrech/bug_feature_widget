@@ -9,10 +9,21 @@
     "url": "git+https://github.com/simongrech/bug_feature_widget.git"
   },
   "homepage": "https://github.com/simongrech/bug_feature_widget#readme",
-  "keywords": ["bug-report", "feature-request", "feedback", "widget", "react", "nextjs"],
+  "keywords": [
+    "bug-report",
+    "feature-request",
+    "feedback",
+    "widget",
+    "react",
+    "nextjs"
+  ],
   "type": "module",
-  "sideEffects": ["*.css"],
-  "files": ["dist"],
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,21 +41,31 @@
     "./styles.css": "./dist/styles.css"
   },
   "scripts": {
+    "dev": "vite --config playground/vite.config.ts",
     "build": "tsup && node scripts/postbuild.mjs",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm run build"
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/node": "^22.13.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^29.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vite": "^6.1.0",
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

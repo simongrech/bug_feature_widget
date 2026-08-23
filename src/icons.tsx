@@ -1,10 +1,10 @@
 /**
- * The seven glyphs the widget draws, inlined as Lucide's own paths.
+ * The glyphs the widget draws, inlined as Lucide's own paths.
  *
  * A dependency on `lucide-react` would force a second icon library on any
  * consumer that already has one — cNc uses Tabler, Trelli uses Lucide — and
  * would tie the widget's look to whichever version they happened to resolve.
- * Seven paths are cheaper than that.
+ * A handful of paths is cheaper than that.
  */
 import type { SVGProps } from 'react';
 
@@ -102,6 +102,44 @@ export function TrashIcon(props: IconProps) {
       <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
       <path d="M10 11v6" />
       <path d="M14 11v6" />
+    </Icon>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Icon>
+  );
+}
+
+export function ClockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </Icon>
+  );
+}
+
+export function AlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </Icon>
+  );
+}
+
+export function RefreshIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
     </Icon>
   );
 }

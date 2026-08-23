@@ -43,6 +43,18 @@ export interface FeedbackItem {
   reporterEmail?: string | null;
   /** Whether the current actor filed this — what edit and delete are gated on. */
   mine: boolean;
+  /**
+   * Set on reports still sitting in the browser outbox because the hub could
+   * not be reached. They render in the list like anything else so that the
+   * reporter can see their report was kept, with the wait spelled out.
+   */
+  pending?: boolean;
+  /** Human-readable next attempt, e.g. "retrying in 2h". Pending items only. */
+  pendingLabel?: string;
+  /** The full story for the status tooltip: attempts made, next one due. */
+  pendingDetail?: string;
+  /** Schedule exhausted — offers a manual retry instead. */
+  gaveUp?: boolean;
 }
 
 /** Answer of `GET {apiBase}/config`. */
