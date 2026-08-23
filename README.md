@@ -393,6 +393,57 @@ npm run build          # tsup → dist/, then postbuild applies "use client"
 proxy and imports no React. The postbuild step asserts both, because a missing directive
 surfaces in someone else's app as a confusing hook error.
 
+## Releasing
+
+Consumers install this from npm. That is not a preference — a consuming app's Docker
+build runs `npm ci` inside `node:20-alpine`, which has no git and no access to anybody's
+local disk, so a registry package is the only form that works there.
+
+```bash
+npm version patch        # or minor / major — commits and tags
+git push --follow-tags
+```
+
+The tag fires `.github/workflows/publish.yml`, which typechecks, tests, builds and
+publishes. It needs an `NPM_TOKEN` repo secret with publish rights on the scope.
+
+To publish by hand instead:
+
+```bash
+npm login
+npm publish --access public
+```
+
+`prepublishOnly` runs typecheck, tests and build first, so a broken release fails before
+it leaves the machine. `npm publish --dry-run` shows exactly what would ship.
+
+**The scope has to exist.** `@melatech` must be an npm organisation you own — free for
+public packages, created at npmjs.com/org/create. Without it, publish fails on the scope
+no matter how the token is set up.
+
+### Consuming a new version
+
+```bash
+npm update @melatech/feedback-widget
+```
+
+In development, against a change that is not published yet, skip the registry:
+
+```bash
+# here
+npm run build && npm pack
+# in the consumer
+npm install ../bug_feature_widget/melatech-feedback-widget-0.1.0.tgz
+rm -rf .next        # Next caches the compiled dependency, and swapping it in
+                    # place does not reliably invalidate that
+```
+
+A git dependency (`npm i github:simongrech/bug_feature_widget`) also works — `prepare`
+builds it on install — but it needs `git` in the consumer's Docker image and rebuilds the
+widget on every CI run, so it suits a quick trial rather than a deployment.
+
+<br>
+
 ## Licence
 
 MIT
