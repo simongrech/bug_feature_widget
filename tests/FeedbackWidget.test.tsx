@@ -260,6 +260,75 @@ describe('FeedbackWidget', () => {
     expect(box).toHaveValue('Will retry');
   });
 
+  it('keeps a report the hub could not take, and says so without alarming anybody', async () => {
+    stubApi({ post: () => json({ error: 'down' }, 503) });
+    const { user } = await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+    const box = screen.getByPlaceholderText(/describe a bug/i);
+    await user.type(box, 'Hub was down when I filed this');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+
+    // The box clears because the report is safe, not because it was sent.
+    expect(await screen.findByText(/saved/i)).toBeInTheDocument();
+    expect(box).toHaveValue('');
+
+    // And it is in the list straight away, labelled, so nobody files it twice.
+    expect(screen.getByText('Hub was down when I filed this')).toBeInTheDocument();
+    expect(screen.getByText(/retrying in/i)).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('mtfw:queue:/api/feedback') ?? '[]')).toHaveLength(1);
+  });
+
+  it('marks a delivered report as sent', async () => {
+    stubApi({ items: [item({ id: 'srv', text: 'Already delivered' })] });
+    await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+
+    expect(await screen.findByText('Already delivered')).toBeInTheDocument();
+    expect(screen.getByText('Sent')).toBeInTheDocument();
+  });
+
+  it('delivers what it kept once the hub answers again', async () => {
+    let down = true;
+    stubApi({ post: () => (down ? json({ error: 'down' }, 503) : json(item({ id: 'srv', text: 'Filed during the outage' }))) });
+
+    const { user } = await openWidget(
+      <FeedbackWidget actor={actor} mode="bugs" retryScheduleMs={[0]} />,
+    );
+    await user.type(screen.getByPlaceholderText(/describe a bug/i), 'Filed during the outage');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+    await screen.findByText(/retrying in|sending/i);
+
+    down = false;
+    // Coming back to the tab is one of the triggers for a delivery attempt.
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    await waitFor(() => expect(screen.getByText('Sent')).toBeInTheDocument());
+    expect(JSON.parse(localStorage.getItem('mtfw:queue:/api/feedback') ?? '[]')).toHaveLength(0);
+  });
+
+  it('offers a retry once the schedule has run out, and keeps the report meanwhile', async () => {
+    stubApi({ post: () => json({ error: 'down' }, 503) });
+    const { user } = await openWidget(
+      <FeedbackWidget actor={actor} mode="bugs" retryScheduleMs={[]} />,
+    );
+    await user.type(screen.getByPlaceholderText(/describe a bug/i), 'Nothing got through');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(await screen.findByText(/not sent/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByText('Nothing got through')).toBeInTheDocument();
+  });
+
+  it('does not queue a rejection that would fail the same way tomorrow', async () => {
+    stubApi({ post: () => json({ error: 'this site does not collect bugs' }, 422) });
+    const { user } = await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);
+    await user.type(screen.getByPlaceholderText(/describe a bug/i), 'Wrong kind');
+    await user.click(screen.getByRole('button', { name: /add bug/i }));
+
+    expect(await screen.findByText(/could not send that/i)).toBeInTheDocument();
+    expect(localStorage.getItem('mtfw:queue:/api/feedback')).toBeNull();
+  });
+
   it('leaves the submit button disabled while the draft is empty', async () => {
     stubApi();
     await openWidget(<FeedbackWidget actor={actor} mode="bugs" />);

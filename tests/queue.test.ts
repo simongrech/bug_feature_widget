@@ -45,7 +45,9 @@ describe('the retry schedule', () => {
     enqueue(KEY, { kind: 'bug', text: 'Kept for later' }, SCHEDULE);
     const waits: number[] = [];
 
-    for (let i = 0; i < SCHEDULE.length + 1; i += 1) {
+    // enqueue already booked the first wait, so this drives the rest until
+    // the schedule runs out.
+    while (!only().gaveUp) {
       const before = Date.now();
       backOff(KEY, only().id, 'HTTP 503', SCHEDULE);
       const report = only();
