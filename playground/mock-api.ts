@@ -1,8 +1,72 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import type { FeedbackItem } from '../src/types';
+import type { FeedbackItem, FeedbackMessage } from '../src/types';
 
 const PREFIX = '/api/feedback';
+
+/**
+ * Threads, keyed by report. Oldest first, as the hub returns them — the widget
+ * is the thing that decides to read them newest first, and it can only be
+ * trusted to if the mock hands them over in the hub's order.
+ */
+function seedMessages(): Record<string, FeedbackMessage[]> {
+  const now = Date.now();
+  const at = (minutesAgo: number) => new Date(now - minutesAgo * 60 * 1000).toISOString();
+  return {
+    '1': [
+      {
+        id: 'm1',
+        body: 'Any progress on this? It happens every time the network drops.',
+        createdAt: at(180),
+        authorKind: 'reporter',
+        authorName: 'Ada Lovelace',
+        mine: true,
+      },
+      {
+        id: 'm2',
+        body: 'Reproduced it here — the button never re-enables after a 500.',
+        createdAt: at(150),
+        authorKind: 'staff',
+        authorName: 'Simon Grech',
+        mine: false,
+      },
+      {
+        id: 'm3',
+        body: 'Thanks. Is there a workaround in the meantime?',
+        createdAt: at(120),
+        authorKind: 'reporter',
+        authorName: 'Ada Lovelace',
+        mine: true,
+      },
+      {
+        id: 'm4',
+        body: 'Reloading the page clears it for now.',
+        createdAt: at(90),
+        authorKind: 'staff',
+        authorName: 'Simon Grech',
+        mine: false,
+      },
+      {
+        id: 'm5',
+        body: 'Fix is in review, should ship this week.',
+        createdAt: at(20),
+        authorKind: 'staff',
+        authorName: 'Simon Grech',
+        mine: false,
+      },
+    ],
+    '3': [
+      {
+        id: 'm6',
+        body: 'Queued behind the theming work — still on the list.',
+        createdAt: at(60),
+        authorKind: 'staff',
+        authorName: 'Support',
+        mine: false,
+      },
+    ],
+  };
+}
 
 function seed(): FeedbackItem[] {
   const now = Date.now();
@@ -18,6 +82,7 @@ function seed(): FeedbackItem[] {
       criticality: 'high',
       mine: true,
       reporterName: 'Ada Lovelace',
+      messageCount: 5,
     },
     {
       id: '2',
@@ -42,6 +107,7 @@ function seed(): FeedbackItem[] {
       priority: 'medium',
       mine: true,
       reporterName: 'Ada Lovelace',
+      messageCount: 1,
     },
     {
       id: '4',
@@ -83,7 +149,9 @@ function readBody(req: IncomingMessage): Promise<string> {
  */
 export function mockFeedbackApi(): Plugin {
   let items = seed();
+  const threads = seedMessages();
   let nextId = 100;
+  let nextMessageId = 500;
 
   return {
     name: 'mock-feedback-api',
@@ -140,6 +208,43 @@ export function mockFeedbackApi(): Plugin {
             items = [created, ...items];
             send(res, 200, created);
             return;
+          }
+
+          const messagesMatch = path.match(/^\/items\/([^/]+)\/messages$/);
+          if (messagesMatch) {
+            const id = messagesMatch[1]!;
+            if (!items.some((i) => i.id === id)) {
+              send(res, 404, { error: 'not found' });
+              return;
+            }
+
+            if (method === 'GET') {
+              send(res, 200, threads[id] ?? []);
+              return;
+            }
+
+            if (method === 'POST') {
+              const body = JSON.parse(await readBody(req)) as { body?: string };
+              const text = typeof body.body === 'string' ? body.body.trim() : '';
+              if (!text) {
+                send(res, 422, { error: 'body required' });
+                return;
+              }
+              const created: FeedbackMessage = {
+                id: String(nextMessageId++),
+                body: text,
+                createdAt: new Date().toISOString(),
+                authorKind: 'reporter',
+                authorName: 'Ada Lovelace',
+                mine: true,
+              };
+              threads[id] = [...(threads[id] ?? []), created];
+              items = items.map((i) =>
+                i.id === id ? { ...i, messageCount: threads[id]!.length } : i,
+              );
+              send(res, 201, created);
+              return;
+            }
           }
 
           const itemMatch = path.match(/^\/items\/([^/]+)$/);

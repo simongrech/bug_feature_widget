@@ -17,6 +17,9 @@ export function item(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     rejected: false,
     mine: true,
     reporterName: 'Ada Lovelace',
+    // The hub sends this on every row, and a report with no replies is the
+    // common case — a fixture without it would have every thread go looking.
+    messageCount: 0,
     ...overrides,
   };
 }

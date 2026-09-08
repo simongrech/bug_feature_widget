@@ -1,12 +1,52 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatDate } from './format';
 import type { FeedbackMessage } from './types';
+
+/**
+ * How much of a conversation shows without being asked for, and how much each
+ * "show more" adds. Three is enough to see that an answer came and roughly
+ * what it said; a whole thread expanded in a 20rem panel would bury the next
+ * report under it.
+ */
+const PREVIEW = 3;
+const PAGE = 5;
+
+/** Who wrote a reply, as the reader should see it. */
+function describe(message: FeedbackMessage): {
+  name: string;
+  tone: 'staff' | 'you' | 'reporter';
+} {
+  if (message.authorKind === 'staff') {
+    return { name: message.authorName ?? 'Support', tone: 'staff' };
+  }
+  if (message.mine) return { name: 'You', tone: 'you' };
+  return { name: message.authorName ?? 'Reporter', tone: 'reporter' };
+}
+
+/**
+ * Up to two letters for the bubble. First and last word, so "Ada Lovelace"
+ * reads as AL rather than AD — a room of Adas is told apart by the surname.
+ */
+function initials(label: string): string {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  const first = words[0]![0]!;
+  const last = words.length > 1 ? words[words.length - 1]![0]! : '';
+  return (first + last).toUpperCase();
+}
 
 /**
  * The conversation on one report.
  *
- * Loaded when the thread is opened rather than with the list: most reports
- * have no replies, and fetching every thread up front would make opening the
- * panel slower for the common case in order to speed up the rare one.
+ * The last few replies are shown with the report rather than hidden behind the
+ * toggle: an answer nobody opens is an answer nobody read, and the panel gave
+ * no sign that one had arrived. Newest first, because that is the one being
+ * waited for; older ones are a click away.
+ *
+ * The fetch still only happens for a report that has replies — `count` of 0
+ * skips it, which is most of them, and is why opening the panel does not cost
+ * one request per row. A `count` the hub did not send is unknown rather than
+ * zero, so the conversation is fetched instead of being assumed empty.
  *
  * A report that has been triaged still accepts replies. "Why was this
  * rejected?" is exactly the question a thread is for, and the hub allows it
@@ -17,19 +57,26 @@ export function Thread({
   apiBase,
   count,
   onCountChange,
+  active = true,
 }: {
   itemId: string;
   apiBase: string;
-  count: number;
+  /** Replies the list said there are. `undefined` means the hub did not say. */
+  count?: number;
   onCountChange: (next: number) => void;
+  /** Whether the panel holding this thread is open. Nothing loads while shut. */
+  active?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [messages, setMessages] = useState<FeedbackMessage[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [shown, setShown] = useState(PREVIEW);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await fetch(`${apiBase}/items/${itemId}/messages`);
       if (!res.ok) {
@@ -46,12 +93,36 @@ export function Thread({
     } catch {
       setError('Could not reach the server.');
       setMessages([]);
+    } finally {
+      setLoading(false);
     }
   }, [apiBase, itemId]);
 
   useEffect(() => {
-    if (open && messages === null) void load();
-  }, [open, messages, load]);
+    if (!active || loading || messages !== null) return;
+    // Opening the composer on a report with no replies is a reason to look as
+    // well: somebody may have answered since the list was fetched.
+    if (count === 0 && !composing) return;
+    void load();
+  }, [active, composing, count, load, loading, messages]);
+
+  /**
+   * Newest first. The hub returns the conversation oldest first, which is the
+   * right order to read a thread in but the wrong one to truncate: cutting the
+   * tail off would hide exactly the reply somebody is waiting for.
+   */
+  const ordered = useMemo(
+    () =>
+      messages === null
+        ? []
+        : [...messages].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ),
+    [messages],
+  );
+
+  const visible = ordered.slice(0, shown);
+  const hidden = ordered.length - visible.length;
 
   const send = useCallback(async () => {
     const body = draft.trim();
@@ -72,56 +143,92 @@ export function Thread({
         return;
       }
       const created = (await res.json()) as FeedbackMessage;
-      setMessages((prev) => [...(prev ?? []), created]);
-      onCountChange(count + 1);
+      const before = messages?.length ?? count ?? 0;
+      setMessages((prev) => [created, ...(prev ?? [])]);
+      onCountChange(before + 1);
       setDraft('');
     } catch {
       setError('Could not reach the server.');
     } finally {
       setBusy(false);
     }
-  }, [apiBase, busy, count, draft, itemId, onCountChange]);
+  }, [apiBase, busy, count, draft, itemId, messages, onCountChange]);
+
+  // A conversation the list says is empty draws nothing at all until somebody
+  // opens the composer, so a report with no replies keeps the row it had.
+  const showLog = count !== 0 || messages !== null;
 
   return (
     <div className="mtfw-thread">
+      {showLog && (
+        <div className="mtfw-thread-log">
+          {messages === null ? (
+            <p className="mtfw-thread-empty">Loading replies…</p>
+          ) : (
+            ordered.length > 0 && (
+              <>
+                <ul className="mtfw-thread-list">
+                  {visible.map((message) => {
+                    const who = describe(message);
+                    return (
+                      <li key={message.id} className={`mtfw-message mtfw-message--${who.tone}`}>
+                        <span
+                          className={`mtfw-avatar mtfw-avatar--${who.tone}`}
+                          aria-hidden="true"
+                          title={who.name}
+                        >
+                          {initials(message.authorName ?? who.name)}
+                        </span>
+                        <div className="mtfw-message-main">
+                          <p className="mtfw-message-who">
+                            <span className="mtfw-message-name">{who.name}</span>
+                            <time className="mtfw-message-time" dateTime={message.createdAt}>
+                              {formatDate(message.createdAt)}
+                            </time>
+                          </p>
+                          <p className="mtfw-message-body">{message.body}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {hidden > 0 ? (
+                  <button
+                    type="button"
+                    className="mtfw-thread-more"
+                    onClick={() => setShown((n) => n + PAGE)}
+                  >
+                    Show {hidden} more {hidden === 1 ? 'reply' : 'replies'}
+                  </button>
+                ) : (
+                  shown > PREVIEW && (
+                    <button
+                      type="button"
+                      className="mtfw-thread-more"
+                      onClick={() => setShown(PREVIEW)}
+                    >
+                      Show fewer
+                    </button>
+                  )
+                )}
+              </>
+            )
+          )}
+        </div>
+      )}
+
       <button
         type="button"
         className="mtfw-thread-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        aria-expanded={composing}
+        onClick={() => setComposing((o) => !o)}
       >
-        {count === 0 ? 'Reply' : count === 1 ? '1 reply' : `${count} replies`}
-        <span aria-hidden="true">{open ? ' ▴' : ' ▾'}</span>
+        Reply
+        <span aria-hidden="true">{composing ? ' ▴' : ' ▾'}</span>
       </button>
 
-      {open && (
+      {composing && (
         <div className="mtfw-thread-body">
-          {messages === null ? (
-            <p className="mtfw-thread-empty">Loading…</p>
-          ) : messages.length === 0 ? (
-            <p className="mtfw-thread-empty">No replies yet.</p>
-          ) : (
-            <ul className="mtfw-thread-list">
-              {messages.map((message) => (
-                <li
-                  key={message.id}
-                  className={`mtfw-message mtfw-message--${
-                    message.authorKind === 'staff' ? 'staff' : 'reporter'
-                  }`}
-                >
-                  <p className="mtfw-message-who">
-                    {message.authorKind === 'staff'
-                      ? (message.authorName ?? 'Support')
-                      : message.mine
-                        ? 'You'
-                        : (message.authorName ?? 'Reporter')}
-                  </p>
-                  <p className="mtfw-message-body">{message.body}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-
           <textarea
             className="mtfw-thread-input"
             rows={2}
@@ -144,9 +251,10 @@ export function Thread({
           >
             Send reply
           </button>
-          {error && <p className="mtfw-notice mtfw-notice--error">{error}</p>}
         </div>
       )}
+
+      {error && <p className="mtfw-notice mtfw-notice--error">{error}</p>}
     </div>
   );
 }

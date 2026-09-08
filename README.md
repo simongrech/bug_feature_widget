@@ -205,10 +205,17 @@ default, because a forced guess is worse data than none. One field on the wire; 
 files it as criticality for a bug and priority for a feature, and refuses `critical` on a
 feature because that scale stops at high. Staff can still change it afterwards.
 
-**Every report carries a thread.** Collapsed behind a `Reply` / `3 replies` toggle and
-loaded only when opened — most reports have none, and fetching every thread with the list
-would slow the common case for the sake of the rare one. Staff replies are tinted so the
-answer from your side is the one that catches the eye.
+**Every report carries a thread.** The three newest replies show under the report itself,
+newest first, each with the writer's initials in a bubble — an answer nobody opens is an
+answer nobody read. `Show N more replies` walks back through the rest five at a time, and
+`Show fewer` folds it up again. Staff replies are tinted and their bubble is a different
+colour, so the answer from your side is the one that catches the eye.
+
+Only a report the hub says has replies is fetched, and only while the panel is open — most
+reports have none, so opening the panel does not cost a request per row. A report whose
+`messageCount` the hub leaves out is treated as unknown rather than empty, and looked up.
+The box to write a reply stays behind the `Reply` toggle, so a long conversation cannot
+push the next report out of reach.
 
 A reply is *not* queued when the hub is down, unlike a report. A reply that turns up hours
 later, out of order, in a conversation that has moved on is worse than one the sender knows

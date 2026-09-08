@@ -747,6 +747,7 @@ export function FeedbackWidget({
                   onDelete={deleteItem}
                   onRetry={retryItem}
                   apiBase={apiBase}
+                  active={isOpen}
                   onMessageCountChange={bumpMessageCount}
                 />
               ))}

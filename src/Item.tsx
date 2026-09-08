@@ -1,26 +1,8 @@
 import { useCallback, useState } from 'react';
+import { formatDate } from './format';
 import { AlertIcon, CheckIcon, ClockIcon, PencilIcon, RefreshIcon, TrashIcon } from './icons';
 import { Thread } from './Thread';
 import type { FeedbackItem, FeedbackKind } from './types';
-
-/**
- * Same rule the original widget used: today shows a time, anything older shows
- * a date. Locale and zone are the reader's, which is right for a widget that
- * only ever shows a reader their own reports.
- */
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  if (d.toDateString() === new Date().toDateString()) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 function StatusBadge({ item }: { item: FeedbackItem }) {
   if (item.rejected) return <span className="mtfw-badge mtfw-badge--rejected">Rejected</span>;
@@ -97,8 +79,10 @@ export interface ItemProps {
   onRetry?: (id: string) => void;
   /** Where the proxy is mounted, for loading the reply thread. */
   apiBase?: string;
-  /** Told when a reply is added, so the list's label stays right. */
+  /** Told when a reply is added, so the list's count stays right. */
   onMessageCountChange?: (id: string, next: number) => void;
+  /** Whether the panel is open. Threads do not fetch behind a closed one. */
+  active?: boolean;
 }
 
 export function Item({
@@ -109,6 +93,7 @@ export function Item({
   onRetry,
   apiBase = '/api/feedback',
   onMessageCountChange,
+  active = true,
 }: ItemProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -236,7 +221,10 @@ export function Item({
         <Thread
           itemId={item.id}
           apiBase={apiBase}
-          count={item.messageCount ?? 0}
+          /* Passed through as-is: a hub that does not report a count leaves
+             this undefined, which the thread reads as "unknown" and looks. */
+          count={item.messageCount}
+          active={active}
           onCountChange={(next) => onMessageCountChange?.(item.id, next)}
         />
       )}

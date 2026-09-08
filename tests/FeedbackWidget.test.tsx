@@ -29,6 +29,12 @@ function stubApi(options?: {
       return json(options?.config ?? { site: { name: 'Acme', slug: 'acme' }, mode: 'both' });
     }
 
+    // Before the plain `/items` arm below, which would otherwise answer a
+    // thread with the whole list of reports.
+    if (url.includes('/messages')) {
+      return json(method === 'POST' ? { id: 'm', body: '', createdAt: '', authorKind: 'reporter', authorName: null, mine: true } : []);
+    }
+
     if (method === 'GET' && url.includes('/items')) {
       return json(items);
     }
