@@ -1,6 +1,6 @@
 {
   "name": "@melatech/feedback-widget",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Floating bug-report and feature-request widget that reports into a central hub. Zero runtime dependencies, self-contained styling, light/dark themes.",
   "license": "MIT",
   "author": "Mela-Tech",
