@@ -43,10 +43,12 @@ function initials(label: string): string {
  * no sign that one had arrived. Newest first, because that is the one being
  * waited for; older ones are a click away.
  *
- * The fetch still only happens for a report that has replies — `count` of 0
- * skips it, which is most of them, and is why opening the panel does not cost
- * one request per row. A `count` the hub did not send is unknown rather than
- * zero, so the conversation is fetched instead of being assumed empty.
+ * The conversation is fetched for every report on screen once the panel is
+ * open, and `messageCount` decides only what is drawn while that is in flight.
+ * It was the gate at first, until a hub answering 0 for a report that plainly
+ * had a reply hid the conversation behind the toggle again — which is the one
+ * thing the preview exists to stop. A count is a hint about how many, never
+ * evidence that there are none.
  *
  * A report that has been triaged still accepts replies. "Why was this
  * rejected?" is exactly the question a thread is for, and the hub allows it
@@ -100,11 +102,8 @@ export function Thread({
 
   useEffect(() => {
     if (!active || loading || messages !== null) return;
-    // Opening the composer on a report with no replies is a reason to look as
-    // well: somebody may have answered since the list was fetched.
-    if (count === 0 && !composing) return;
     void load();
-  }, [active, composing, count, load, loading, messages]);
+  }, [active, load, loading, messages]);
 
   /**
    * Newest first. The hub returns the conversation oldest first, which is the
@@ -154,9 +153,14 @@ export function Thread({
     }
   }, [apiBase, busy, count, draft, itemId, messages, onCountChange]);
 
-  // A conversation the list says is empty draws nothing at all until somebody
-  // opens the composer, so a report with no replies keeps the row it had.
-  const showLog = count !== 0 || messages !== null;
+  /**
+   * What to draw before the conversation arrives — which is all `count` is
+   * still good for. A report the list says is empty keeps the row it had,
+   * rather than every report in the panel flashing "Loading replies…" the
+   * moment it opens; if the fetch turns up replies anyway, they appear.
+   */
+  const expecting = count === undefined || count > 0;
+  const showLog = messages === null ? expecting : ordered.length > 0;
 
   return (
     <div className="mtfw-thread">

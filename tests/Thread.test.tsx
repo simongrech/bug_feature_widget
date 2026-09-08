@@ -82,14 +82,29 @@ describe('Thread', () => {
     expect(screen.getByText('Reply 9')).toBeInTheDocument();
   });
 
-  it('does not fetch a conversation the list says is empty', async () => {
-    // Most reports have no replies; loading every thread with the list would
-    // slow the common case down for the sake of the rare one.
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => json([]));
-    vi.stubGlobal('fetch', fetchMock);
+  it('shows replies the list said were not there', async () => {
+    // A hub answering 0 for a report that has replies is not hypothetical —
+    // it is what shipped. The count is a hint about how many, never evidence
+    // that there are none, so the conversation is fetched either way.
+    vi.stubGlobal('fetch', vi.fn(async () => json(conversation(1))));
 
     render(<Thread itemId="abc" apiBase="/api/feedback" count={0} onCountChange={noop} />);
-    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(await screen.findByText('Reply 1')).toBeInTheDocument();
+  });
+
+  it('stays quiet while it checks a report the list says is empty', async () => {
+    // Most reports have none, and every row in the panel announcing "Loading
+    // replies…" on open would be worse than the wait it describes.
+    vi.stubGlobal('fetch', vi.fn(async () => json([])));
+
+    const { container } = render(
+      <Thread itemId="abc" apiBase="/api/feedback" count={0} onCountChange={noop} />,
+    );
+    expect(container.querySelector('.mtfw-thread-log')).toBeNull();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^reply/i })).toBeEnabled());
+    expect(container.querySelector('.mtfw-thread-log')).toBeNull();
   });
 
   it('does not fetch while the panel holding it is shut', async () => {

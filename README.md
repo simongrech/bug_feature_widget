@@ -211,11 +211,13 @@ answer nobody read. `Show N more replies` walks back through the rest five at a 
 `Show fewer` folds it up again. Staff replies are tinted and their bubble is a different
 colour, so the answer from your side is the one that catches the eye.
 
-Only a report the hub says has replies is fetched, and only while the panel is open — most
-reports have none, so opening the panel does not cost a request per row. A report whose
-`messageCount` the hub leaves out is treated as unknown rather than empty, and looked up.
-The box to write a reply stays behind the `Reply` toggle, so a long conversation cannot
-push the next report out of reach.
+Threads are fetched for the reports on screen once the panel is open, and never while it
+is shut. `messageCount` decides only what is drawn while that is in flight — a report the
+hub calls empty stays quiet rather than flashing "Loading replies…" — but it is not a gate:
+a hub that answers `0` for a report that has replies would otherwise hide the conversation
+behind the toggle, which is the one thing the preview exists to stop. The box to write a
+reply stays behind the `Reply` toggle, so a long conversation cannot push the next report
+out of reach.
 
 A reply is *not* queued when the hub is down, unlike a report. A reply that turns up hours
 later, out of order, in a conversation that has moved on is worse than one the sender knows
@@ -402,17 +404,23 @@ surfaces in someone else's app as a confusing hook error.
 
 ## Releasing
 
+Pushing commits to GitHub does **not** publish to npm. Consumers still get whatever
+version is on the registry until you cut a new one. A version that is already on npm
+cannot be republished — bump it first.
+
 Consumers install this from npm. That is not a preference — a consuming app's Docker
 build runs `npm ci` inside `node:20-alpine`, which has no git and no access to anybody's
 local disk, so a registry package is the only form that works there.
 
 ```bash
-npm version patch        # or minor / major — commits and tags
+npm version patch        # 0.1.0 → 0.1.1, or use minor / major; commits and tags
 git push --follow-tags
 ```
 
-The tag fires `.github/workflows/publish.yml`, which typechecks, tests, builds and
-publishes. It needs an `NPM_TOKEN` repo secret with publish rights on the scope.
+Publishing only happens when a `v*` tag is pushed. That tag fires
+`.github/workflows/publish.yml`, which typechecks, tests, builds and publishes. It needs
+an `NPM_TOKEN` repo secret with publish rights on the `@melatech` scope. Without that
+secret, the tag push will not ship the package.
 
 To publish by hand instead:
 
